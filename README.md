@@ -1,0 +1,141 @@
+# apitest
+
+[简体中文](README.zh-CN.md) | English
+
+A minimal **Spring Boot RESTful CRUD** demo: a classic Controller → Service → Mapper layered architecture for `t_user` records, built with MyBatis-Plus so single-table CRUD needs almost no hand-written SQL.
+
+## Features
+
+- 6 RESTful endpoints covering full CRUD: list, get by id, fuzzy search, add, update, delete
+- Layered architecture: `Controller` → `Service` → `Mapper` → MySQL
+- MyBatis-Plus generates all single-table SQL automatically
+- Unified response wrapper `Result{code, msg, data}` for a stable front-end contract
+- JDK 21, Spring Boot 2.7.12, MySQL 8
+
+## Tech Stack
+
+| Layer | Tech |
+|---|---|
+| Language / Runtime | Java 21 (OpenJDK Temurin) |
+| Framework | Spring Boot 2.7.12 |
+| ORM | MyBatis-Plus 3.5.3.2 |
+| Database | MySQL 8 (database `testdb`, table `t_user`) |
+| Build | Maven 3.8+ |
+| Other | Lombok 1.18.34 |
+
+## Quick Start
+
+### Prerequisites
+
+- JDK 21+ installed
+- Maven 3.8+ installed
+- MySQL 8 running locally
+
+### 1. Initialize the database
+
+```sql
+-- run the bundled script
+mysql -u root < src/main/resources/sql/user_table.sql
+```
+
+This creates the `testdb` database, the `t_user` table, and two test rows (`zhangsan`, `lisi`).
+
+### 2. Configure the connection
+
+Edit `src/main/resources/application.yml` (local defaults: user `apitest` / password `apitest123`; adjust if yours differ):
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/testdb?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: apitest
+    password: apitest123
+```
+
+> For anything beyond local development, move credentials to environment variables (e.g. `${DB_USER}`, `${DB_PASSWORD}`) instead of hard-coding them.
+
+### 3. Build & run
+
+```bash
+mvn -q -DskipTests package
+java -jar target/demo-0.0.1-SNAPSHOT.jar
+```
+
+The service starts on port **8080**. Wait for `Started DemoApplication` in the log, then verify:
+
+```bash
+curl http://127.0.0.1:8080/user/list
+```
+
+## API Reference
+
+Base path: `/user` · Response wrapper: `{"code":200,"msg":"操作成功","data":...}` (`code=200` means success)
+
+| Method | Path | Params | Description |
+|---|---|---|---|
+| GET | `/user/list` | — | List all users |
+| GET | `/user/{id}` | path `id` | Get one user by id |
+| GET | `/user/query` | query `username` (optional) | Fuzzy search by username |
+| POST | `/user` | JSON body | Create a user |
+| PUT | `/user` | JSON body (with `id`) | Update a user |
+| DELETE | `/user/{id}` | path `id` | Delete a user |
+
+### Examples
+
+**GET /user/list**
+
+```json
+{
+  "code": 200,
+  "msg": "操作成功",
+  "data": [
+    {"id": 1, "username": "zhangsan", "age": 22, "email": "zhangsan@test.com"},
+    {"id": 2, "username": "lisi", "age": 25, "email": "lisi@test.com"}
+  ]
+}
+```
+
+**POST /user**
+
+Request body:
+
+```json
+{"username": "wangwu", "age": 30, "email": "wangwu@test.com"}
+```
+
+Response: `{"code": 200, "msg": "操作成功", "data": true}`
+
+**PUT /user** — the body **must** include `id`, otherwise the update is skipped:
+
+```json
+{"id": 3, "username": "wangwu", "age": 31, "email": "wangwu@test.com"}
+```
+
+**DELETE /user/3** — response: `{"code": 200, "msg": "操作成功", "data": true}`
+
+**GET /user/query?username=zhang** — matches `zhangsan` via `LIKE '%zhang%'`.
+
+## Project Structure
+
+```
+apitest/
+├── pom.xml                         # dependencies: web, mybatis-plus, mysql, lombok
+├── src/main/java/com/example/demo/
+│   ├── DemoApplication.java       # Spring Boot entry
+│   ├── controller/UserController.java  # REST endpoints
+│   ├── service/UserService.java   # business layer (extends ServiceImpl)
+│   ├── mapper/UserMapper.java     # data layer (extends BaseMapper)
+│   └── entity/
+│       ├── User.java              # maps to t_user
+│       └── Result.java            # unified response wrapper
+└── src/main/resources/
+    ├── application.yml            # port 8080, datasource, mybatis-plus
+    └── sql/user_table.sql         # DDL + seed data
+```
+
+## Troubleshooting
+
+- **`Port 8080 was already in use`** → `ss -tlnp | grep 8080`, find the PID and `kill <PID>`.
+- **`Table 'testdb.t_user' doesn't exist`** → run the SQL script first.
+- **Compiler error about `JCTree`** → make sure Lombok is ≥ 1.18.30 (project uses 1.18.34) for JDK 21 support.
+- **Client can't reach the service** → when running inside WSL2, use the WSL IP (`wsl hostname -I`) instead of `127.0.0.1` if localhost forwarding is off.
