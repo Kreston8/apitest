@@ -10,18 +10,20 @@ English | [简体中文](README.zh-CN.md)
 - 标准分层架构：`Controller` → `Service` → `Mapper` → MySQL
 - MyBatis-Plus 自动生成全部单表 SQL
 - 统一返回体 `Result{code, msg, data}`，前后端契约固定
-- JDK 21 + Spring Boot 2.7.12 + MySQL 8
+- **springdoc-openapi 自动生成 OpenAPI 3 接口文档**：自带 Swagger UI 页面 + JSON 规范，可直接导入 Apifox
+- JDK 21 + Spring Boot 3.3.13 + MySQL 8
 
 ## 技术栈
 
 | 层级 | 技术 |
 |---|---|
 | 语言 / 运行时 | Java 21（OpenJDK Temurin） |
-| 框架 | Spring Boot 2.7.12 |
-| ORM | MyBatis-Plus 3.5.3.2 |
+| 框架 | Spring Boot 3.3.13 |
+| ORM | MyBatis-Plus 3.5.17（spring-boot3 starter，`AbstractRepository`） |
+| 接口文档 | springdoc-openapi 2.5.0 |
 | 数据库 | MySQL 8（库 `testdb`，表 `t_user`） |
 | 构建 | Maven 3.8+ |
-| 其他 | Lombok 1.18.34 |
+| 其他 | Lombok 1.18.36 |
 
 ## 快速开始
 
@@ -66,6 +68,17 @@ java -jar target/demo-0.0.1-SNAPSHOT.jar
 ```bash
 curl http://127.0.0.1:8080/user/list
 ```
+
+## 接口文档（OpenAPI 3）
+
+springdoc-openapi 自动生成规范文档，无需额外配置：
+
+| 资源 | 地址 |
+|---|---|
+| Swagger UI（浏览器查看） | `http://127.0.0.1:8080/swagger-ui/index.html` |
+| OpenAPI JSON 规范 | `http://127.0.0.1:8080/v3/api-docs` |
+
+**导入 Apifox**（或其他 OpenAPI 客户端）：新建/选择项目 → 导入数据 → OpenAPI/Swagger → URL 导入 → 填 `http://127.0.0.1:8080/v3/api-docs`。接口、参数、响应结构全部自动生成；改完代码重新导入（覆盖）即可保持同步。
 
 ## 接口文档
 
@@ -119,11 +132,11 @@ curl http://127.0.0.1:8080/user/list
 
 ```
 apitest/
-├── pom.xml                         # 依赖：web、mybatis-plus、mysql、lombok
+├── pom.xml                         # 依赖：web、mybatis-plus-boot3、springdoc、mysql、lombok
 ├── src/main/java/com/example/demo/
 │   ├── DemoApplication.java       # Spring Boot 启动类
 │   ├── controller/UserController.java  # 接口层：REST 端点
-│   ├── service/UserService.java   # 业务层（继承 ServiceImpl）
+│   ├── service/UserService.java   # 业务层（继承 AbstractRepository）
 │   ├── mapper/UserMapper.java     # 数据层（继承 BaseMapper）
 │   └── entity/
 │       ├── User.java              # 实体，映射 t_user 表
@@ -137,5 +150,5 @@ apitest/
 
 - **`Port 8080 was already in use`** → `ss -tlnp | grep 8080` 找到 PID，`kill <PID>`。
 - **`Table 'testdb.t_user' doesn't exist`** → 先执行建表 SQL 脚本。
-- **编译报 `JCTree` 相关错误** → Lombok 需 ≥ 1.18.30 才支持 JDK 21（本项目已用 1.18.34）。
+- **编译报 `JCTree` 相关错误** → Lombok 需 ≥ 1.18.30 才支持 JDK 21（本项目已用 1.18.36）。
 - **客户端连不上服务** → 在 WSL2 中运行时，若 localhost 转发失效，改用 WSL IP（`wsl hostname -I`）访问。
