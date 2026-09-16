@@ -49,12 +49,20 @@ public class UserController {
         return Result.success(b);
     }
 
-    // 条件模糊查询
+    // 条件查询：用户名模糊 + 年龄区间
     @GetMapping("/query")
-    public Result<List<User>> query(@RequestParam(required = false) String username){
+    public Result<List<User>> query(@RequestParam(required = false) String username,
+                                    @RequestParam(required = false) Integer minAge,
+                                    @RequestParam(required = false) Integer maxAge){
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
         if(username != null){
             wrapper.like(User::getUsername, username);
+        }
+        if(minAge != null){
+            wrapper.ge(User::getAge, minAge);
+        }
+        if(maxAge != null){
+            wrapper.le(User::getAge, maxAge);
         }
         return Result.success(userService.list(wrapper));
     }
