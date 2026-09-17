@@ -6,10 +6,13 @@ English | [简体中文](README.zh-CN.md)
 
 ## 功能特性
 
-- 6 个 RESTful 接口覆盖完整增删改查：列表、按 id 查询、模糊查询、新增、修改、删除
+- 7 个 RESTful 接口覆盖完整增删改查 + **账户转账**：列表、按 id 查询、模糊查询、新增、修改、删除、转账
+- **转账带事务**：`扣款 + 入账` 在同一个 `@Transactional` 里执行——要么全部成功，要么全部回滚；失败时双方余额分毫不动
+- **原子扣款**：用条件 `UPDATE ... WHERE balance >= amount` 保证并发转账也不会把余额扣成负数
 - 标准分层架构：`Controller` → `Service` → `Mapper` → MySQL
 - MyBatis-Plus 自动生成全部单表 SQL
-- 统一返回体 `Result{code, msg, data}`，前后端契约固定
+- 统一返回体 `Result{code, msg, data}` + 全局异常处理（`@RestControllerAdvice`）
+- 每个用户带 `balance`（存款）字段；测试数据内置三人（`zhangsan`、`lisi`、`wangwu`），初始余额随机不等
 - **springdoc-openapi 自动生成 OpenAPI 3 接口文档**：自带 Swagger UI 页面 + JSON 规范，可直接导入 Apifox
 - JDK 21 + Spring Boot 3.3.13 + MySQL 8
 
@@ -40,7 +43,13 @@ English | [简体中文](README.zh-CN.md)
 mysql -u root < src/main/resources/sql/user_table.sql
 ```
 
-会创建 `testdb` 库、`t_user` 表，并写入两条测试数据（`zhangsan`、`lisi`）。
+会创建 `testdb` 库、`t_user` 表（含 `balance DECIMAL(12,2)` 存款列），并写入三条测试数据，初始余额随机不等：
+
+| id | username | age | balance |
+|---|---|---|---|
+| 1 | zhangsan | 22 | 12800.50 |
+| 2 | lisi | 25 | 9377.25 |
+| 3 | wangwu | 30 | 15666.80 |
 
 ### 2. 修改连接配置
 
@@ -88,10 +97,11 @@ springdoc-openapi 自动生成规范文档，无需额外配置：
 |---|---|---|---|
 | GET | `/user/list` | — | 查询全部用户 |
 | GET | `/user/{id}` | 路径参数 id | 按 id 查询单个 |
-| GET | `/user/query` | 查询参数 username（可选） | 按用户名模糊查询 |
+| GET | `/user/query` | 查询参数 username（可选）、minAge/maxAge（可选） | 用户名模糊 + 年龄区间查询 |
 | POST | `/user` | JSON 请求体 | 新增用户 |
 | PUT | `/user` | JSON 请求体（必须含 id） | 修改用户 |
 | DELETE | `/user/{id}` | 路径参数 id | 删除用户 |
+| POST | `/user/transfer` | JSON 请求体 `{fromId, toId, amount}` | 账户间转账（事务保证） |
 
 ### 示例
 
@@ -102,8 +112,9 @@ springdoc-openapi 自动生成规范文档，无需额外配置：
   "code": 200,
   "msg": "操作成功",
   "data": [
-    {"id": 1, "username": "zhangsan", "age": 22, "email": "zhangsan@test.com"},
-    {"id": 2, "username": "lisi", "age": 25, "email": "lisi@test.com"}
+    {"id": 1, "username": "zhangsan", "age": 22, "email": "zhangsan@test.com", "balance": 12800.50},
+    {"id": 2, "username": "lisi", "age": 25, "email": "lisi@test.com", "balance": 9377.25},
+    {"id": 3, "username": "wangwu", "age": 30, "email": "wangwu@test.com", "balance": 15666.80}
   ]
 }
 ```
@@ -126,7 +137,36 @@ springdoc-openapi 自动生成规范文档，无需额外配置：
 
 **DELETE /user/3** — 响应：`{"code": 200, "msg": "操作成功", "data": true}`
 
-**GET /user/query?username=zhang** — 通过 `LIKE '%zhang%'` 匹配到 `zhangsan`。
+**GET /user/query?username=zhang&minAge=20&maxAge=30** — 通过 `LIKE '%zhang%'` 匹配到 `zhangsan`，并叠加年龄区间过滤。
+
+**POST /user/transfer** — 从 zhangsan(1) 给 lisi(2) 转 500：
+
+请求体：
+
+```json
+{"fromId": 1, "toId": 2, "amount": 500}
+```
+
+响应：`{"code": 200, "msg": "操作成功", "data": true}`
+
+失败场景返回 `code=400` + 明确原因，**所有余额保持不变**（事务回滚）：
+
+```json
+{"code": 400, "msg": "转出账户不存在或余额不足", "data": null}
+{"code": 400, "msg": "转入账户不存在", "data": null}
+{"code": 400, "msg": "不能给自己转账", "data": null}
+{"code": 400, "msg": "转账金额必须大于 0", "data": null}
+```
+
+### 转账事务是怎么保证的
+
+`POST /user/transfer` 由 `UserService.transfer()` 处理，方法标注 `@Transactional(rollbackFor = Exception.class)`：
+
+1. 参数校验：`amount > 0`、`fromId != toId`、两个 id 均非空。
+2. **原子扣款**：`UPDATE t_user SET balance = balance - #{amount} WHERE id = #{fromId} AND balance >= #{amount}`——影响行数为 0 表示余额不足或转出账户不存在；`balance >= amount` 这个条件同时保证并发转账不会超扣。
+3. **入账**：`UPDATE t_user SET balance = balance + #{amount} WHERE id = #{toId}`——影响行数为 0 表示转入账户不存在。
+
+任一步失败都会抛出 `TransferException`，整个事务回滚，第 2 步已经执行的扣款被一并撤销——**两条 UPDATE 要么同时提交，要么同时回滚**。异常由 `GlobalExceptionHandler` 统一转成 `Result.fail(400, msg)`。
 
 ## 项目结构
 
@@ -135,20 +175,24 @@ apitest/
 ├── pom.xml                         # 依赖：web、mybatis-plus-boot3、springdoc、mysql、lombok
 ├── src/main/java/com/example/demo/
 │   ├── DemoApplication.java       # Spring Boot 启动类
-│   ├── controller/UserController.java  # 接口层：REST 端点
-│   ├── service/UserService.java   # 业务层（继承 AbstractRepository）
-│   ├── mapper/UserMapper.java     # 数据层（继承 BaseMapper）
+│   ├── controller/UserController.java  # 接口层：REST 端点（含 /transfer）
+│   ├── service/UserService.java   # 业务层（继承 AbstractRepository，含 transfer()）
+│   ├── mapper/UserMapper.java     # 数据层（继承 BaseMapper，含 deductBalance/addBalance）
+│   ├── dto/TransferRequest.java   # 转账请求体
+│   ├── exception/
+│   │   ├── TransferException.java # 转账业务异常（触发回滚）
+│   │   └── GlobalExceptionHandler.java  # @RestControllerAdvice 全局异常处理
 │   └── entity/
-│       ├── User.java              # 实体，映射 t_user 表
+│       ├── User.java              # 实体，映射 t_user 表（含 balance）
 │       └── Result.java            # 统一返回体
 └── src/main/resources/
     ├── application.yml            # 端口 8080、数据源、mybatis-plus 配置
-    └── sql/user_table.sql         # 建表语句 + 测试数据
+    └── sql/user_table.sql         # 建表语句（含 balance）+ 3 条测试数据
 ```
 
 ## 常见问题
 
 - **`Port 8080 was already in use`** → `ss -tlnp | grep 8080` 找到 PID，`kill <PID>`。
-- **`Table 'testdb.t_user' doesn't exist`** → 先执行建表 SQL 脚本。
+- **`Table 'testdb.t_user' doesn't exist`** 或 **`Unknown column 'balance'`** → 重新执行建表 SQL 脚本（脚本幂等，先 `DROP TABLE IF EXISTS`）。
 - **编译报 `JCTree` 相关错误** → Lombok 需 ≥ 1.18.30 才支持 JDK 21（本项目已用 1.18.36）。
 - **客户端连不上服务** → 在 WSL2 中运行时，若 localhost 转发失效，改用 WSL IP（`wsl hostname -I`）访问。

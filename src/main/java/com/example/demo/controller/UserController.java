@@ -1,6 +1,7 @@
 package com.example.demo.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.demo.dto.TransferRequest;
 import com.example.demo.entity.Result;
 import com.example.demo.entity.User;
 import com.example.demo.service.UserService;
@@ -65,5 +66,12 @@ public class UserController {
             wrapper.le(User::getAge, maxAge);
         }
         return Result.success(userService.list(wrapper));
+    }
+
+    // 转账：同一事务内扣款 + 入账，要么全部成功，要么全部失败（失败时余额不变）
+    @PostMapping("/transfer")
+    public Result<Boolean> transfer(@RequestBody TransferRequest req){
+        userService.transfer(req.getFromId(), req.getToId(), req.getAmount());
+        return Result.success(true);
     }
 }
