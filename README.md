@@ -9,6 +9,7 @@ A minimal **Spring Boot RESTful CRUD** demo: a classic Controller → Service �
 - 7 RESTful endpoints covering full CRUD + **account transfer**: list, get by id, fuzzy search, add, update, delete, transfer
 - **Transactional transfer**: `deduct balance + add balance` runs in one `@Transactional` — either both succeed or both roll back; a failed transfer leaves every balance unchanged
 - **Atomic deduction** via conditional `UPDATE ... WHERE balance >= amount`, so concurrent transfers can never overdraft
+- **Three transfer methods**: `CASH` (default) / `ALIPAY` / `WECHAT` — optional `payMethod` in the request body, case-insensitive (`cash`/`Cash`) and Chinese aliases (`现金`/`支付宝`/`微信`) accepted
 - Layered architecture: `Controller` → `Service` → `Mapper` → MySQL
 - MyBatis-Plus generates all single-table SQL automatically
 - Unified response wrapper `Result{code, msg, data}` for a stable front-end contract, plus a global exception handler (`@RestControllerAdvice`)
@@ -38,9 +39,10 @@ A minimal **Spring Boot RESTful CRUD** demo: a classic Controller → Service �
 
 ### 1. Initialize the database
 
-```sql
--- run the bundled script
-mysql -u root < src/main/resources/sql/user_table.sql
+```bash
+# create the database first, then run the bundled script against it
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS testdb DEFAULT CHARSET utf8mb4"
+mysql -u root -p testdb < src/main/resources/sql/user_table.sql
 ```
 
 This creates the `testdb` database, the `t_user` table (with a `balance DECIMAL(12,2)` column), and three test rows with random unequal starting balances:
@@ -101,7 +103,7 @@ Base path: `/user` · Response wrapper: `{"code":200,"msg":"操作成功","data"
 | POST | `/user` | JSON body | Create a user |
 | PUT | `/user` | JSON body (with `id`) | Update a user |
 | DELETE | `/user/{id}` | path `id` | Delete a user |
-| POST | `/user/transfer` | JSON body `{fromId, toId, amount}` | Transfer money between two accounts (transactional) |
+| POST | `/user/transfer` | JSON body `{fromId, toId, amount, payMethod?}` | Transfer money between two accounts (transactional; method optional) |
 
 ### Examples
 
@@ -139,12 +141,13 @@ Response: `{"code": 200, "msg": "操作成功", "data": true}`
 
 **GET /user/query?username=zhang&minAge=20&maxAge=30** — matches `zhangsan` via `LIKE '%zhang%'` with age range filter.
 
-**POST /user/transfer** — transfer 500 from zhangsan(1) to lisi(2):
-
-Request body:
+**POST /user/transfer** — transfer 500 from zhangsan(1) to lisi(2). `payMethod` is optional (default `CASH`); any of these work:
 
 ```json
 {"fromId": 1, "toId": 2, "amount": 500}
+{"fromId": 1, "toId": 2, "amount": 500, "payMethod": "ALIPAY"}
+{"fromId": 1, "toId": 2, "amount": 500, "payMethod": "wechat"}
+{"fromId": 1, "toId": 2, "amount": 500, "payMethod": "现金"}
 ```
 
 Response: `{"code": 200, "msg": "操作成功", "data": true}`
@@ -156,13 +159,14 @@ Failure cases return `code=400` with a clear reason and **all balances stay unch
 {"code": 400, "msg": "转入账户不存在", "data": null}
 {"code": 400, "msg": "不能给自己转账", "data": null}
 {"code": 400, "msg": "转账金额必须大于 0", "data": null}
+{"code": 400, "msg": "请求体格式错误：不支持的转账方式: PAYPAL", "data": null}
 ```
 
 ### How the transfer transaction works
 
 `POST /user/transfer` is handled by `UserService.transfer()`, annotated with `@Transactional(rollbackFor = Exception.class)`:
 
-1. Validate params: `amount > 0`, `fromId != toId`, both ids present.
+1. Validate params: `amount > 0`, `fromId != toId`, both ids present; `payMethod` defaults to `CASH` when omitted (the enum value is guaranteed valid by Jackson deserialization).
 2. **Atomic deduct**: `UPDATE t_user SET balance = balance - #{amount} WHERE id = #{fromId} AND balance >= #{amount}` — 0 affected rows means insufficient balance or a missing source account; the conditional `balance >= amount` also makes concurrent transfers safe (no overdraft).
 3. **Credit** the target: `UPDATE t_user SET balance = balance + #{amount} WHERE id = #{toId}` — 0 affected rows means the target account doesn't exist.
 
@@ -178,7 +182,8 @@ apitest/
 │   ├── controller/UserController.java  # REST endpoints (incl. /transfer)
 │   ├── service/UserService.java   # business layer (extends AbstractRepository, has transfer())
 │   ├── mapper/UserMapper.java     # data layer (extends BaseMapper, has deductBalance/addBalance)
-│   ├── dto/TransferRequest.java   # transfer request body
+│   ├── enums/PayMethod.java       # transfer methods: CASH / ALIPAY / WECHAT
+│   ├── dto/TransferRequest.java   # transfer request body (incl. payMethod)
 │   ├── exception/
 │   │   ├── TransferException.java # business exception → triggers rollback
 │   │   └── GlobalExceptionHandler.java  # @RestControllerAdvice → Result.fail

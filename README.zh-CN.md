@@ -9,6 +9,7 @@ English | [简体中文](README.zh-CN.md)
 - 7 个 RESTful 接口覆盖完整增删改查 + **账户转账**：列表、按 id 查询、模糊查询、新增、修改、删除、转账
 - **转账带事务**：`扣款 + 入账` 在同一个 `@Transactional` 里执行——要么全部成功，要么全部回滚；失败时双方余额分毫不动
 - **原子扣款**：用条件 `UPDATE ... WHERE balance >= amount` 保证并发转账也不会把余额扣成负数
+- **三种转账方式**：`CASH` 现金（默认）/ `ALIPAY` 支付宝 / `WECHAT` 微信，请求体里可选传 `payMethod`，大小写（`cash`/`Cash`）和中文（`现金`/`支付宝`/`微信`）写法都兼容
 - 标准分层架构：`Controller` → `Service` → `Mapper` → MySQL
 - MyBatis-Plus 自动生成全部单表 SQL
 - 统一返回体 `Result{code, msg, data}` + 全局异常处理（`@RestControllerAdvice`）
@@ -38,9 +39,10 @@ English | [简体中文](README.zh-CN.md)
 
 ### 1. 初始化数据库
 
-```sql
--- 执行项目自带的建表脚本
-mysql -u root < src/main/resources/sql/user_table.sql
+```bash
+# 先建库，再对库执行项目自带的建表脚本
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS testdb DEFAULT CHARSET utf8mb4"
+mysql -u root -p testdb < src/main/resources/sql/user_table.sql
 ```
 
 会创建 `testdb` 库、`t_user` 表（含 `balance DECIMAL(12,2)` 存款列），并写入三条测试数据，初始余额随机不等：
@@ -101,7 +103,7 @@ springdoc-openapi 自动生成规范文档，无需额外配置：
 | POST | `/user` | JSON 请求体 | 新增用户 |
 | PUT | `/user` | JSON 请求体（必须含 id） | 修改用户 |
 | DELETE | `/user/{id}` | 路径参数 id | 删除用户 |
-| POST | `/user/transfer` | JSON 请求体 `{fromId, toId, amount}` | 账户间转账（事务保证） |
+| POST | `/user/transfer` | JSON 请求体 `{fromId, toId, amount, payMethod?}` | 账户间转账（事务保证，方式可选） |
 
 ### 示例
 
@@ -139,12 +141,13 @@ springdoc-openapi 自动生成规范文档，无需额外配置：
 
 **GET /user/query?username=zhang&minAge=20&maxAge=30** — 通过 `LIKE '%zhang%'` 匹配到 `zhangsan`，并叠加年龄区间过滤。
 
-**POST /user/transfer** — 从 zhangsan(1) 给 lisi(2) 转 500：
-
-请求体：
+**POST /user/transfer** — 从 zhangsan(1) 给 lisi(2) 转 500。`payMethod` 可选（默认 `CASH`），以下写法都行：
 
 ```json
 {"fromId": 1, "toId": 2, "amount": 500}
+{"fromId": 1, "toId": 2, "amount": 500, "payMethod": "ALIPAY"}
+{"fromId": 1, "toId": 2, "amount": 500, "payMethod": "wechat"}
+{"fromId": 1, "toId": 2, "amount": 500, "payMethod": "现金"}
 ```
 
 响应：`{"code": 200, "msg": "操作成功", "data": true}`
@@ -156,13 +159,14 @@ springdoc-openapi 自动生成规范文档，无需额外配置：
 {"code": 400, "msg": "转入账户不存在", "data": null}
 {"code": 400, "msg": "不能给自己转账", "data": null}
 {"code": 400, "msg": "转账金额必须大于 0", "data": null}
+{"code": 400, "msg": "请求体格式错误：不支持的转账方式: PAYPAL", "data": null}
 ```
 
 ### 转账事务是怎么保证的
 
 `POST /user/transfer` 由 `UserService.transfer()` 处理，方法标注 `@Transactional(rollbackFor = Exception.class)`：
 
-1. 参数校验：`amount > 0`、`fromId != toId`、两个 id 均非空。
+1. 参数校验：`amount > 0`、`fromId != toId`、两个 id 均非空；`payMethod` 缺省默认 `CASH`（枚举取值由 Jackson 反序列化保证合法）。
 2. **原子扣款**：`UPDATE t_user SET balance = balance - #{amount} WHERE id = #{fromId} AND balance >= #{amount}`——影响行数为 0 表示余额不足或转出账户不存在；`balance >= amount` 这个条件同时保证并发转账不会超扣。
 3. **入账**：`UPDATE t_user SET balance = balance + #{amount} WHERE id = #{toId}`——影响行数为 0 表示转入账户不存在。
 
@@ -178,7 +182,8 @@ apitest/
 │   ├── controller/UserController.java  # 接口层：REST 端点（含 /transfer）
 │   ├── service/UserService.java   # 业务层（继承 AbstractRepository，含 transfer()）
 │   ├── mapper/UserMapper.java     # 数据层（继承 BaseMapper，含 deductBalance/addBalance）
-│   ├── dto/TransferRequest.java   # 转账请求体
+│   ├── enums/PayMethod.java       # 转账方式枚举：CASH / ALIPAY / WECHAT
+│   ├── dto/TransferRequest.java   # 转账请求体（含 payMethod）
 │   ├── exception/
 │   │   ├── TransferException.java # 转账业务异常（触发回滚）
 │   │   └── GlobalExceptionHandler.java  # @RestControllerAdvice 全局异常处理

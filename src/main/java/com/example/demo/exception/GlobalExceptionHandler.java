@@ -1,6 +1,7 @@
 package com.example.demo.exception;
 
 import com.example.demo.entity.Result;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -14,6 +15,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(TransferException.class)
     public Result<Void> handleTransfer(TransferException e) {
         return Result.fail(400, e.getMessage());
+    }
+
+    // 请求体解析失败（JSON 格式错误、枚举值不合法如 payMethod="PAYPAL"）→ 400
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public Result<Void> handleNotReadable(HttpMessageNotReadableException e) {
+        return Result.fail(400, "请求体格式错误：" + e.getMostSpecificCause().getMessage());
     }
 
     // 兜底：未预期异常 → 500，不让原始堆栈直接暴露给前端

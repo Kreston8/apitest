@@ -69,9 +69,10 @@ public class UserController {
     }
 
     // 转账：同一事务内扣款 + 入账，要么全部成功，要么全部失败（失败时余额不变）
+    // payMethod 可选：CASH（默认）/ ALIPAY / WECHAT，也兼容小写或中文写法
     @PostMapping("/transfer")
     public Result<Boolean> transfer(@RequestBody TransferRequest req){
-        userService.transfer(req.getFromId(), req.getToId(), req.getAmount());
+        userService.transfer(req.getFromId(), req.getToId(), req.getAmount(), req.getPayMethod());
         return Result.success(true);
     }
 }
